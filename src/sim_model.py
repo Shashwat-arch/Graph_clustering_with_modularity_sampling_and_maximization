@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch_geometric.nn import SAGEConv, GCNConv
 import torch.nn.functional as F
 
-from loss import Loss
+from src.sim_loss import Loss
 
 
 class Encoder(torch.nn.Module):

@@ -5,13 +5,13 @@ import numpy as np
 
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, GATConv
+from torch_geometric.nn import GCNConv
 from torch_sparse import SparseTensor
 from torch_geometric.datasets import Planetoid, Amazon
 from torch_geometric.utils import to_undirected, add_remaining_self_loops
 
-from utils import setup_seed, get_sim, get_mask, scale, clustering, get_adjacency
-from models.model_gat import Model, Encoder
+from src.utils import setup_seed, get_sim, get_mask, scale, clustering
+from src.sim_model import Model, Encoder
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--verbose', type=bool, default=True, help='')
@@ -24,28 +24,18 @@ parser.add_argument('--dataset', type=str, default='Cora')
 parser.add_argument('--hidden', type=str, default='512', help='GNN encoder')
 parser.add_argument('--projection', type=str, default='', help='Projection')
 
-# GAT-specific parameters
-parser.add_argument('--heads', type=int, default=4, 
-                   help='Number of attention heads')
-parser.add_argument('--attn_dropout', type=float, default=0.4,
-                   help='Dropout rate for attention weights')
-parser.add_argument('--concat', type=bool, default=True,
-                   help='Concatenate head outputs')
-
 # sample para
 parser.add_argument('--wt', type=int, default=100,
-                   help='number of random walks')
+                    help='number of random walks')
 parser.add_argument('--wl', type=int, default=2, help='depth of random walks')
 parser.add_argument('--tau', type=float, default=0.3, help='temperature')
 
-# learning para (original parameters maintained)
+# learning para
 parser.add_argument('--dropout', type=float, default=0.1, help='')
 parser.add_argument('--lr', type=float, default=0.0005, help='learning rate')
 parser.add_argument('--wd', type=float, default=1e-3, help='weight decay')
 parser.add_argument('--epochs', type=int, default=400)
-parser.add_argument('--ns', type=float, default=0.2, 
-                   help='LeakyReLU negative slope')
-
+parser.add_argument('--ns', type=float, default=0.5, help='')
 args = parser.parse_args()
 
 
@@ -75,7 +65,6 @@ def train():
     batch, adj_batch = get_sim(batch, adj, wt=args.wt, wl=args.wl)
 
     mask = get_mask(adj_batch)
-    adjacency = get_adjacency(edge_index, N)
 
     hidden = list(map(int, args.hidden.split(',')))
     if args.projection == '':
@@ -83,33 +72,17 @@ def train():
     else:
         projection = list(map(int, args.projection.split(',')))
 
+    encoder = Encoder(data.num_features, hidden, base_model=GCNConv,
+                      dropout=args.dropout, ns=args.ns).to(device)
+    model = Model(
+        encoder, in_channels=hidden[-1], project_hidden=projection, tau=args.tau).to(device)
+    x, edge_index = data.x.to(device), data.edge_index.to(device)
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=args.lr, weight_decay=args.wd)
 
     dataset2n_clusters = {'Cora': 7,
                           'Citeseer': 6, 'Photo': 8, 'Computers': 10}
     n_clusters = dataset2n_clusters[args.dataset]
-
-    encoder = Encoder(
-        in_channels=data.num_features,
-        hidden_channels=hidden,
-        base_model=GATConv,
-        dropout=args.dropout,
-        heads=args.heads,
-        attn_dropout=args.attn_dropout,
-        negative_slope=args.ns,
-        concat=args.concat
-    ).to(device)
-
-    model = Model(
-    encoder, 
-    in_channels=hidden[-1], 
-    project_hidden=projection, 
-    tau=args.tau,
-    n_clusters=7  # Pass integer here
-    ).to(device)
-    
-    x, edge_index = data.x.to(device), data.edge_index.to(device)
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=args.lr, weight_decay=args.wd)
 
     # train
     for epoch in range(1, args.epochs + 1):
@@ -118,19 +91,7 @@ def train():
         out = model(x, edge_index)
         out = scale(out)
         out = F.normalize(out, p=2, dim=1)
-        # In train() function:
-        _, _, _, _, _, assignments = clustering(
-            out.detach().cpu().numpy(), 
-            n_clusters, 
-            y.numpy(),
-            spectral_clustering=True
-        )
-
-        # Convert to tensor and match device
-        assignment_tensor = torch.LongTensor(assignments).to(out.device)
-
-        # Pass tensor to loss
-        loss = model.loss(out, mask, assignment_tensor, adjacency)
+        loss = model.loss(out, mask)
         loss.backward()
         optimizer.step()
         if args.verbose:
@@ -142,7 +103,7 @@ def train():
         out = model(x, edge_index)
         out = scale(out)
         out = F.normalize(out, p=2, dim=1).detach().cpu()
-        acc, nmi, ari, f1_macro, f1_micro, assignments = clustering(
+        acc, nmi, ari, f1_macro, f1_micro = clustering(
             out.numpy(), n_clusters, y.numpy(), spectral_clustering=True)
 
     print(

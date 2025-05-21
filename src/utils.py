@@ -10,8 +10,8 @@ try:
 except:
     def patch_sklearn(): return
 
-from clustering_metric import clustering_metrics
-from batch_kmeans_cuda import kmeans
+from src.clustering_metrics import clustering_metrics
+
 
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -94,8 +94,7 @@ def clustering(feature, n_clusters, true_labels, kmeans_device='cpu', batch_size
         torch.tensor(nmi),
         torch.tensor(fms),
         torch.tensor(f1_macro),
-        torch.tensor(f1_micro),
-        torch.LongTensor(predict_labels)
+        torch.tensor(f1_micro)
     )
 
 
