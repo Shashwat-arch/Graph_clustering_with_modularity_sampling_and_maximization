@@ -136,21 +136,20 @@ def train():
       optimizer_clustering.zero_grad()
 
       # Forward pass
-      assignment, spec_loss, ent_loss = model_clustering(out, adj_norm)
-      clustering_loss = spec_loss + coll_loss
-
+      assignments, pooled_embeddings, spectral_loss, collapse_loss, total_loss, entropy_loss = model_clustering(out, adj_norm)
       # Backward pass
-      clustering_loss.backward()
+      total_loss.backward()
       optimizer_clustering.step()
 
-      print(f"Epoch {epoch+1}: Loss={clustering_loss.item():.4f} "
-              f"(Spectral={spec_loss.item():.4f}, "
-              f"Collapse={coll_loss.item():.4f})")
-    hard_labels = torch.argmax(assignment, dim=1).cpu().numpy()
+      print(f"Epoch {epoch+1}: Loss={total_loss.item():.4f} "
+              f"(Spectral={spectral_loss.item():.4f}, "
+              f"Collapse={collapse_loss.item():.4f})"
+              f"Entropy={entropy_loss.item():.4f}")
+    hard_labels = torch.argmax(assignments, dim=1).cpu().numpy()
 
     metrics_eval = clustering_metrics(y.numpy(), hard_labels)
 
-    acc, nmi, ari, f1_macro, f1_micro = 0, 0, 0, 0, 0
+    acc, nmi, ari, fms, f1_macro, f1_micro = metrics_eval.evaluationClusterModelFromLabel(tqdm=None)
     print("clusters: ", len(np.unique(y.numpy())), len(np.unique(hard_labels)))
 
     # eval

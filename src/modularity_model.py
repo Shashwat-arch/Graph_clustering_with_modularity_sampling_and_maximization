@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch_sparse import SparseTensor
+from torch_geometric.nn import GCNConv
+
 
 class DMoNClustering(nn.Module):
     """Neural Network for Clustering Embeddings using DMoN-inspired approach.
@@ -15,38 +17,46 @@ class DMoNClustering(nn.Module):
         collapse_reg (float): Collapse regularization weight (default: 1.0)
     """
     
-    def __init__(self, input_dim=512, n_clusters=10, hidden_dim=256, 
+    def __init__(self, input_dim=512, n_clusters=10, hidden_dim=256,
                  dropout=0.2, collapse_reg=1.0):
         super().__init__()
         self.n_clusters = n_clusters
         self.collapse_reg = collapse_reg
+        self.dropout = nn.Dropout(dropout)
+
+        # GCN layers with skip connections
+        self.gc1 = GCNConv(input_dim, hidden_dim)
+        self.gc2 = GCNConv(hidden_dim, hidden_dim)
+        self.assign_linear = nn.Linear(hidden_dim, n_clusters)
         
-        # Cluster assignment network
-        self.assign_net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.SELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, n_clusters),
-            nn.Softmax(dim=1)  # Softmax over clusters
-        )
-        
-    def forward(self, embeddings: Tensor, adjacency: SparseTensor) -> tuple[Tensor, Tensor]:
+    def forward(self, embeddings: Tensor, adjacency: SparseTensor) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
         """
         Args:
-            embeddings: Input embeddings [num_nodes, input_dim] (torch.float32)
-            adjacency: Sparse adjacency matrix [num_nodes, num_nodes] (torch.sparse_coo)
-            
+            embeddings: [N, D]
+            adjacency: SparseTensor [N, N]
+
         Returns:
-            Tuple[Tensor, Tensor]: (cluster_assignments, pooled_embeddings)
-                - cluster_assignments: [num_nodes, n_clusters]
-                - pooled_embeddings: [n_clusters, input_dim] if not unpooling
+            assignments: [N, K]
+            pooled_embeddings: [K, D]
+            spectral_loss, collapse_loss, total_loss, entropy_loss
         """
-        # Get cluster assignments
-        assignments = self.assign_net(embeddings)  # [N, K]
-        # print("assignment: ", assignments)
+        # GCN Layer 1
+        x = self.gc1(embeddings, adjacency)
+        x = F.selu(x)
+        x = self.dropout(x)
+
+        # GCN Layer 2 with skip connection
+        x_skip = x  # save for skip connection
+        x = self.gc2(x, adjacency)
+        x = F.selu(x)
+        x = self.dropout(x)
+        x = x + x_skip  # skip connection
+
+        # Cluster assignment
+        assignments = F.softmax(self.assign_linear(x), dim=1)  # [N, K]
         
         # Calculate losses
-        spectral_loss, collapse_loss = self._calculate_losses(assignments, adjacency)
+        total_loss, spectral_loss, collapse_loss, entropy_loss = self._calculate_losses(assignments, adjacency)
         # print("spectral loss: ", spectral_loss, "collapse loss: ", collapse_loss)
         
         # Pool embeddings by cluster
@@ -54,7 +64,7 @@ class DMoNClustering(nn.Module):
         assignments_pooling = assignments / (cluster_sizes + 1e-8)  # [N, K]
         pooled_embeddings = assignments_pooling.T @ embeddings  # [K, D]
         
-        return assignments, pooled_embeddings, spectral_loss, collapse_loss
+        return assignments, pooled_embeddings, spectral_loss, collapse_loss, total_loss, entropy_loss
     
     def _calculate_losses(self, assignments: Tensor, adjacency: SparseTensor) -> tuple[Tensor, Tensor]:
         """Compute DMoN losses"""
@@ -80,4 +90,4 @@ class DMoNClustering(nn.Module):
         
         # Return all losses
         total_loss = spectral_loss + self.collapse_reg * collapse_loss + entropy_loss
-        return spectral_loss, self.collapse_reg * collapse_loss, entropy_loss
+        return total_loss, spectral_loss, self.collapse_reg * collapse_loss, entropy_loss
