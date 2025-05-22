@@ -68,6 +68,7 @@ def clustering(feature, n_clusters, true_labels, kmeans_device='cpu', batch_size
             n_clusters=n_clusters, affinity='precomputed', random_state=0)
         f_adj = np.matmul(feature, np.transpose(feature))
         predict_labels = Cluster.fit_predict(f_adj)
+        print(predict_labels.dtype)
     else:
         if kmeans_device == 'cuda':
             if isinstance(feature, np.ndarray):
