@@ -2,95 +2,76 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.sparse import SparseTensor
+from torch_sparse import SparseTensor
 
-class DMoN(nn.Module):
-    """PyTorch implementation of Deep Modularity Network (DMoN) layer.
+class DMoNClustering(nn.Module):
+    """Neural Network for Clustering Embeddings using DMoN-inspired approach.
     
     Args:
-        n_clusters (int): Number of clusters
-        collapse_regularization (float): Collapse regularization weight
-        dropout_rate (float): Dropout rate before softmax
-        do_unpooling (bool): Whether to perform unpooling
+        input_dim (int): Dimension of input embeddings (512 in your case)
+        n_clusters (int): Number of clusters to predict
+        hidden_dim (int): Hidden layer dimension (default: 256)
+        dropout (float): Dropout rate (default: 0.2)
+        collapse_reg (float): Collapse regularization weight (default: 1.0)
     """
     
-    def __init__(self, 
-                 n_clusters: int,
-                 collapse_regularization: float = 0.1,
-                 dropout_rate: float = 0,
-                 do_unpooling: bool = False):
+    def __init__(self, input_dim=512, n_clusters=10, hidden_dim=256, 
+                 dropout=0.2, collapse_reg=1.0):
         super().__init__()
         self.n_clusters = n_clusters
-        self.collapse_regularization = collapse_regularization
-        self.dropout_rate = dropout_rate
-        self.do_unpooling = do_unpooling
-
-        # Transformation layers
-        self.transform = nn.Sequential(
-            nn.Linear(in_features=0, out_features=n_clusters),  # Placeholder
-            nn.Dropout(dropout_rate))
+        self.collapse_reg = collapse_reg
         
-        # Initialize weights
-        self._init_weights()
-
-    def _init_weights(self):
-        # Orthogonal initialization for linear layer
-        nn.init.orthogonal_(self.transform[0].weight)
-        nn.init.zeros_(self.transform[0].bias)
-
-    def forward(self, features: Tensor, adjacency: SparseTensor) -> Tuple[Tensor, Tensor]:
+        # Cluster assignment network
+        self.assign_net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.SELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, n_clusters),
+            nn.Softmax(dim=1)  # Softmax over clusters
+        )
+        
+    def forward(self, embeddings: Tensor, adjacency: SparseTensor) -> tuple[Tensor, Tensor]:
         """
         Args:
-            features (Tensor): Node features [n_nodes, n_features]
-            adjacency (SparseTensor): Sparse adjacency matrix [n_nodes, n_nodes]
+            embeddings: Input embeddings [num_nodes, input_dim] (torch.float32)
+            adjacency: Sparse adjacency matrix [num_nodes, num_nodes] (torch.sparse_coo)
             
         Returns:
-            Tuple[Tensor, Tensor]: (pooled_features, assignments)
+            Tuple[Tensor, Tensor]: (cluster_assignments, pooled_embeddings)
+                - cluster_assignments: [num_nodes, n_clusters]
+                - pooled_embeddings: [n_clusters, input_dim] if not unpooling
         """
-        # Dynamic input dimension handling
-        if self.transform[0].in_features == 0:
-            self.transform[0].in_features = features.size(1)
-            self.transform[0].reset_parameters()
-
-        # Cluster assignments
-        assignments = F.softmax(self.transform(features), dim=1)  # [n, k]
+        # Get cluster assignments
+        assignments = self.assign_net(embeddings)  # [N, K]
+        # print("assignment: ", assignments)
         
-        # Cluster sizes and normalized assignments
-        cluster_sizes = assignments.sum(dim=0)  # [k]
-        assignments_pooling = assignments / cluster_sizes  # [n, k]
-
-        # Degree calculations
-        degrees = torch.sparse.sum(adjacency, dim=1).to_dense().unsqueeze(1)  # [n, 1]
-        n_nodes = adjacency.size(0)
-        n_edges = degrees.sum() / 2
-
-        # Graph pooling
-        adj_assign = torch.sparse.mm(adjacency, assignments)  # [n, k]
-        graph_pooled = assignments.t() @ adj_assign  # [k, k]
-
-        # Normalizer calculation
-        normalizer_left = assignments.t() @ degrees  # [k, 1]
-        normalizer_right = degrees.t() @ assignments  # [1, k]
-        normalizer = (normalizer_left @ normalizer_right) / (2 * n_edges)
-
-        # Loss calculations
-        spectral_loss = -torch.trace(graph_pooled - normalizer) / (2 * n_edges)
-        collapse_loss = (torch.norm(cluster_sizes) / n_nodes * 
-                        torch.sqrt(torch.tensor(self.n_clusters)) - 1)
-
-        # Store losses as attributes
-        self.spectral_loss = spectral_loss
-        self.collapse_loss = self.collapse_regularization * collapse_loss
-
-        # Feature pooling
-        features_pooled = assignments_pooling.t() @ features  # [k, d]
-        features_pooled = F.selu(features_pooled)
-
-        if self.do_unpooling:
-            features_pooled = assignments_pooling @ features_pooled  # [n, d]
-
-        return features_pooled, assignments
-
-    def get_losses(self) -> Tuple[Tensor, Tensor]:
-        """Returns the spectral loss and collapse loss"""
-        return self.spectral_loss, self.collapse_loss
+        # Calculate losses
+        spectral_loss, collapse_loss = self._calculate_losses(assignments, adjacency)
+        # print("spectral loss: ", spectral_loss, "collapse loss: ", collapse_loss)
+        
+        # Pool embeddings by cluster
+        cluster_sizes = assignments.sum(dim=0)  # [K]
+        assignments_pooling = assignments / (cluster_sizes + 1e-8)  # [N, K]
+        pooled_embeddings = assignments_pooling.T @ embeddings  # [K, D]
+        
+        return assignments, pooled_embeddings, spectral_loss, collapse_loss
+    
+    def _calculate_losses(self, assignments: Tensor, adjacency: SparseTensor) -> tuple[Tensor, Tensor]:
+        """Compute DMoN losses"""
+        # Degrees and edge count
+        degrees = adjacency.sum(dim=1).to_dense()  # Correct for SparseTensor
+        m = degrees.sum() / 2
+        # print("Degrees and m calculated: ", degrees, m)
+        
+        # Spectral loss (modularity)
+        adjacency = adjacency.to_dense()
+        graph_pooled = assignments.T @ torch.sparse.mm(adjacency, assignments)  # [K, K]
+        normalizer = (assignments.T @ degrees) @ (degrees @ assignments) / (2 * m)
+        spectral_loss = -torch.trace(graph_pooled - normalizer) / (2 * m)
+        
+        # Collapse regularization
+        cluster_sizes = assignments.sum(dim=0)  # [K]
+        collapse_loss = (torch.norm(cluster_sizes) / adjacency.size(0) * \
+                       torch.sqrt(torch.tensor(self.n_clusters)) - 1)
+        
+        return spectral_loss, self.collapse_reg * collapse_loss

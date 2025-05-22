@@ -10,8 +10,10 @@ from torch_sparse import SparseTensor
 from torch_geometric.datasets import Planetoid, Amazon
 from torch_geometric.utils import to_undirected, add_remaining_self_loops
 
-from src.utils import setup_seed, get_sim, get_mask, scale, clustering
+from src.utils import setup_seed, get_sim, get_mask, scale, clustering, get_adjacency
 from src.sim_model import Model, Encoder
+from src.modularity_model import DMoNClustering
+from src.clustering_metrics import clustering_metrics
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--verbose', type=bool, default=True, help='')
@@ -34,7 +36,8 @@ parser.add_argument('--tau', type=float, default=0.3, help='temperature')
 parser.add_argument('--dropout', type=float, default=0.1, help='')
 parser.add_argument('--lr', type=float, default=0.0005, help='learning rate')
 parser.add_argument('--wd', type=float, default=1e-3, help='weight decay')
-parser.add_argument('--epochs', type=int, default=400)
+parser.add_argument('--epochs_sim', type=int, default=400)
+parser.add_argument('--epochs_cluster', type=int, default=400)
 parser.add_argument('--ns', type=float, default=0.5, help='')
 args = parser.parse_args()
 
@@ -85,7 +88,7 @@ def train():
     n_clusters = dataset2n_clusters[args.dataset]
 
     # train
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(1, args.epochs_sim + 1):
         model.train()
         optimizer.zero_grad()
         out = model(x, edge_index)
@@ -97,14 +100,67 @@ def train():
         if args.verbose:
             print(f'(T) | Epoch={epoch:03d}, loss={float(loss):.4f}')
 
+    out = scale(model(x, edge_index))
+    out = F.normalize(out, p=2, dim=1).detach().cpu()
+    ##Output here is a torch.Size([2708, 512])
+##-------------------------------------------------------------------------------------------------
+    model_clustering = DMoNClustering(
+      input_dim=out.shape[1],
+      n_clusters=n_clusters,  # For Cora dataset
+      hidden_dim=hidden[-1],
+      dropout=0.3,
+      collapse_reg=1.0
+    ).to(device)
+    print("Model Initialized.")
+
+    # Compute degrees (D)
+    degrees = adj.sum(dim=1).to_dense()  # [num_nodes]
+    print("Degrees computed: ", degrees, degrees.dtype)
+
+    # Normalize: D^(-1/2) @ A @ D^(-1/2)
+    deg_inv_sqrt = degrees.pow(-0.5)
+    deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0  # Handle isolated nodes
+
+    # Normalize adjacency
+    adj_norm = adj.mul(deg_inv_sqrt.view(-1, 1))  # D^(-1/2) * A
+    adj_norm = adj_norm.mul(deg_inv_sqrt.view(1, -1))  # (D^(-1/2) * A) * D^(-1/2)
+    # adj_coo = adj_norm.to_sparse_coo()
+    print("adjacency type: ", adj_norm.dtype())
+    print("Degree matrix: ", adj_norm.sum(dim=1))
+    
+    optimizer_clustering = torch.optim.Adam(model_clustering.parameters(), lr=0.001)
+    print("clustering optimizer initialized.")
+    #train clustering
+    for epoch in range(1, args.epochs_cluster + 1):
+      model_clustering.train()
+      optimizer_clustering.zero_grad()
+
+      # Forward pass
+      assignment, _, spec_loss, coll_loss = model_clustering(out, adj_norm)
+      clustering_loss = spec_loss + coll_loss
+
+      # Backward pass
+      clustering_loss.backward()
+      optimizer_clustering.step()
+
+      print(f"Epoch {epoch+1}: Loss={clustering_loss.item():.4f} "
+              f"(Spectral={spec_loss.item():.4f}, "
+              f"Collapse={coll_loss.item():.4f})")
+    hard_labels = torch.argmax(assignment, dim=1).cpu().numpy()
+
+    metrics_eval = clustering_metrics(y.numpy(), hard_labels)
+
+    acc, nmi, ari, f1_macro, f1_micro = 0, 0, 0, 0, 0
+    print("clusters: ", len(np.unique(y.numpy())), len(np.unique(hard_labels)))
+
     # eval
-    with torch.no_grad():
-        model.eval()
-        out = model(x, edge_index)
-        out = scale(out)
-        out = F.normalize(out, p=2, dim=1).detach().cpu()
-        acc, nmi, ari, f1_macro, f1_micro = clustering(
-            out.numpy(), n_clusters, y.numpy(), spectral_clustering=True)
+    # with torch.no_grad():
+    #     model.eval()
+    #     out = model(x, edge_index)
+    #     out = scale(out)
+    #     out = F.normalize(out, p=2, dim=1).detach().cpu()
+    #     acc, nmi, ari, f1_macro, f1_micro = clustering(
+    #         out.numpy(), n_clusters, y.numpy(), spectral_clustering=True)
 
     print(
         f'train over | ACC={acc:.4f}, NMI={nmi:.4f},  ARI={ari:.4f}, f1_macro={f1_macro:.4f}, f1_micro={f1_micro:.4f}')
