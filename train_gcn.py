@@ -136,7 +136,7 @@ def train():
       optimizer_clustering.zero_grad()
 
       # Forward pass
-      assignment, _, spec_loss, coll_loss = model_clustering(out, adj_norm)
+      assignment, spec_loss, ent_loss = model_clustering(out, adj_norm)
       clustering_loss = spec_loss + coll_loss
 
       # Backward pass

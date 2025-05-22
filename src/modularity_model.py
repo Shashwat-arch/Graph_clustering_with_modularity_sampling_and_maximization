@@ -73,5 +73,11 @@ class DMoNClustering(nn.Module):
         cluster_sizes = assignments.sum(dim=0)  # [K]
         collapse_loss = (torch.norm(cluster_sizes) / adjacency.size(0) * \
                        torch.sqrt(torch.tensor(self.n_clusters)) - 1)
+
+        # Entropy regularization (encourage balanced cluster usage)
+        entropy = -torch.sum(assignments * torch.log(assignments + 1e-8)) / assignments.size(0)
+        entropy_loss = -0.1 * entropy  # adjust the weight as needed
         
-        return spectral_loss, self.collapse_reg * collapse_loss
+        # Return all losses
+        total_loss = spectral_loss + self.collapse_reg * collapse_loss + entropy_loss
+        return spectral_loss, self.collapse_reg * collapse_loss, entropy_loss
