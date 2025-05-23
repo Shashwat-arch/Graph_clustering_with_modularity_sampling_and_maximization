@@ -103,7 +103,7 @@ def train():
 
     out = scale(model(x, edge_index))
     out = F.normalize(out, p=2, dim=1).detach().cpu()
-    plot.plot(out, y, "after similarity")
+    # plot.plot(out, y, "after similarity", args.dataset)
     ##Output here is a torch.Size([2708, 512])
 ##-------------------------------------------------------------------------------------------------
     dec = DEC_Clustering(input_dim=out.shape[1], n_clusters=n_clusters)
@@ -130,7 +130,7 @@ def train():
     
     print(final_assignments)
     print(cluster_ids)
-    plot.plot(final_emb, y, "after clustering")
+    # plot.plot(final_emb, y, "after clustering", args.dataset)
 
     # hard_labels = torch.argmax(assignments, dim=1).cpu().numpy()
 

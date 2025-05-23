@@ -9,7 +9,7 @@ class DEC_Clustering(nn.Module):
     """Deep Embedded Clustering adapted for graph embeddings with spectral initialization"""
     
     def __init__(self, input_dim=512, n_clusters=10, hidden_dim=256, 
-                 alpha=0.8, dropout=0.3):
+                 alpha=0.5, dropout=0.1):
         super().__init__()
         self.n_clusters = n_clusters
         self.alpha = alpha
@@ -19,11 +19,11 @@ class DEC_Clustering(nn.Module):
         self.projection = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
-            nn.SELU,
+            nn.PReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
-            nn.SELU(),
+            nn.PReLU(),
             nn.Linear(hidden_dim, input_dim)  # Added to match original dim
         )
         
