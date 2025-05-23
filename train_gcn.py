@@ -12,8 +12,9 @@ from torch_geometric.utils import to_undirected, add_remaining_self_loops
 
 from src.utils import setup_seed, get_sim, get_mask, scale, clustering, get_adjacency
 from src.sim_model import Model, Encoder
-from src.modularity_model import DMoNClustering
+from src.modularity_model import DEC_Clustering
 from src.clustering_metrics import clustering_metrics
+import src.plot_clusters as plot
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--verbose', type=bool, default=True, help='')
@@ -102,55 +103,41 @@ def train():
 
     out = scale(model(x, edge_index))
     out = F.normalize(out, p=2, dim=1).detach().cpu()
+    plot.plot(out, y, "after similarity")
     ##Output here is a torch.Size([2708, 512])
 ##-------------------------------------------------------------------------------------------------
-    model_clustering = DMoNClustering(
-      input_dim=out.shape[1],
-      n_clusters=n_clusters,  # For Cora dataset
-      hidden_dim=hidden[-1],
-      dropout=0.3,
-      collapse_reg=1.0
-    ).to(device)
-    print("Model Initialized.")
+    dec = DEC_Clustering(input_dim=out.shape[1], n_clusters=n_clusters)
 
-    # Compute degrees (D)
-    degrees = adj.sum(dim=1).to_dense()  # [num_nodes]
-    print("Degrees computed: ", degrees, degrees.dtype)
-
-    # Normalize: D^(-1/2) @ A @ D^(-1/2)
-    deg_inv_sqrt = degrees.pow(-0.5)
-    deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0  # Handle isolated nodes
-
-    # Normalize adjacency
-    adj_norm = adj.mul(deg_inv_sqrt.view(-1, 1))  # D^(-1/2) * A
-    adj_norm = adj_norm.mul(deg_inv_sqrt.view(1, -1))  # (D^(-1/2) * A) * D^(-1/2)
-    # adj_coo = adj_norm.to_sparse_coo()
-    print("adjacency type: ", adj_norm.dtype())
-    print("Degree matrix: ", adj_norm.sum(dim=1))
+    dec.initialize_clusters(out)
     
-    optimizer_clustering = torch.optim.Adam(model_clustering.parameters(), lr=0.001)
-    print("clustering optimizer initialized.")
-    #train clustering
-    for epoch in range(1, args.epochs_cluster + 1):
-      model_clustering.train()
-      optimizer_clustering.zero_grad()
+    # 4. Setup optimizer
+    optimizer_dec = torch.optim.Adam(dec.parameters(), lr=0.001, weight_decay=1e-4)
 
-      # Forward pass
-      assignments, pooled_embeddings, spectral_loss, collapse_loss, total_loss, entropy_loss = model_clustering(out, adj_norm)
-      # Backward pass
-      total_loss.backward()
-      optimizer_clustering.step()
+    for epoch in range(1, args.epochs_cluster):
+        assignments, pooled, kl_loss, recon_loss, total_loss, final_emb = dec(out)
 
-      print(f"Epoch {epoch+1}: Loss={total_loss.item():.4f} "
-              f"(Spectral={spectral_loss.item():.4f}, "
-              f"Collapse={collapse_loss.item():.4f})"
-              f"Entropy={entropy_loss.item():.4f}")
-    hard_labels = torch.argmax(assignments, dim=1).cpu().numpy()
+        optimizer.zero_grad()
+        total_loss.backward()
+        optimizer.step()
+        
 
-    metrics_eval = clustering_metrics(y.numpy(), hard_labels)
+        print(f"Epoch {epoch}: Loss={total_loss.item():.4f} "
+            f"(KL={kl_loss.item():.4f} Recon={recon_loss.item():.4f})")
+
+    with torch.no_grad():
+        final_assignments = dec(out)[0]
+        cluster_ids = final_assignments.argmax(dim=1)
+    
+    print(final_assignments)
+    print(cluster_ids)
+    plot.plot(final_emb, y, "after clustering")
+
+    # hard_labels = torch.argmax(assignments, dim=1).cpu().numpy()
+
+    metrics_eval = clustering_metrics(y.numpy(), cluster_ids.numpy())
 
     acc, nmi, ari, fms, f1_macro, f1_micro = metrics_eval.evaluationClusterModelFromLabel(tqdm=None)
-    print("clusters: ", len(np.unique(y.numpy())), len(np.unique(hard_labels)))
+    print("clusters: ", len(np.unique(y.numpy())), len(np.unique(cluster_ids)))
 
     # eval
     # with torch.no_grad():

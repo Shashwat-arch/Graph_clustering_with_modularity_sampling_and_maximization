@@ -2,92 +2,82 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch_sparse import SparseTensor
-from torch_geometric.nn import GCNConv
+from sklearn.cluster import KMeans
+from typing import Optional
 
-
-class DMoNClustering(nn.Module):
-    """Neural Network for Clustering Embeddings using DMoN-inspired approach.
+class DEC_Clustering(nn.Module):
+    """Deep Embedded Clustering adapted for graph embeddings with spectral initialization"""
     
-    Args:
-        input_dim (int): Dimension of input embeddings (512 in your case)
-        n_clusters (int): Number of clusters to predict
-        hidden_dim (int): Hidden layer dimension (default: 256)
-        dropout (float): Dropout rate (default: 0.2)
-        collapse_reg (float): Collapse regularization weight (default: 1.0)
-    """
-    
-    def __init__(self, input_dim=512, n_clusters=10, hidden_dim=256,
-                 dropout=0.2, collapse_reg=1.0):
+    def __init__(self, input_dim=512, n_clusters=10, hidden_dim=256, 
+                 alpha=0.8, dropout=0.1):
         super().__init__()
         self.n_clusters = n_clusters
-        self.collapse_reg = collapse_reg
-        self.dropout = nn.Dropout(dropout)
-
-        # GCN layers with skip connections
-        self.gc1 = GCNConv(input_dim, hidden_dim)
-        self.gc2 = GCNConv(hidden_dim, hidden_dim)
-        self.assign_linear = nn.Linear(hidden_dim, n_clusters)
+        self.alpha = alpha
+        self.input_dim = input_dim
         
-    def forward(self, embeddings: Tensor, adjacency: SparseTensor) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+        # Non-linear projection network
+        self.projection = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.PReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.PReLU(),
+            nn.Linear(hidden_dim, input_dim)  # Added to match original dim
+        )
+        
+        # Cluster assignment layer
+        self.cluster_centers = nn.Parameter(torch.Tensor(n_clusters, hidden_dim))
+        nn.init.xavier_uniform_(self.cluster_centers)
+        
+    def forward(self, embeddings: Tensor, adjacency: Optional[Tensor] = None) -> tuple:
         """
         Args:
-            embeddings: [N, D]
-            adjacency: SparseTensor [N, N]
-
+            embeddings: Input embeddings [num_nodes, input_dim]
+            adjacency: Optional (unused here but kept for compatibility)
         Returns:
-            assignments: [N, K]
-            pooled_embeddings: [K, D]
-            spectral_loss, collapse_loss, total_loss, entropy_loss
+            tuple: (assignments, pooled_embeddings, kl_loss, reconstruction_loss, total_loss)
         """
-        # GCN Layer 1
-        x = self.gc1(embeddings, adjacency)
-        x = F.selu(x)
-        x = self.dropout(x)
-
-        # GCN Layer 2 with skip connection
-        x_skip = x  # save for skip connection
-        x = self.gc2(x, adjacency)
-        x = F.selu(x)
-        x = self.dropout(x)
-        x = x + x_skip  # skip connection
-
-        # Cluster assignment
-        assignments = F.softmax(self.assign_linear(x), dim=1)  # [N, K]
+        # Project embeddings
+        z_hidden = self.projection[:-1](embeddings)  # [N, hidden_dim] for clustering
+        z_recon = self.projection(embeddings)  # [N, input_dim] for reconstruction
         
-        # Calculate losses
-        total_loss, spectral_loss, collapse_loss, entropy_loss = self._calculate_losses(assignments, adjacency)
-        # print("spectral loss: ", spectral_loss, "collapse loss: ", collapse_loss)
+        # Student's t-distribution for soft assignment
+        q = 1.0 / (1.0 + (torch.cdist(z_hidden, self.cluster_centers)**2 / self.alpha))
+        q = q**((self.alpha + 1.0) / 2.0)
+        assignments = (q.t() / torch.sum(q, dim=1)).t()  # [N, K]
         
-        # Pool embeddings by cluster
-        cluster_sizes = assignments.sum(dim=0)  # [K]
-        assignments_pooling = assignments / (cluster_sizes + 1e-8)  # [N, K]
-        pooled_embeddings = assignments_pooling.T @ embeddings  # [K, D]
+        # Compute target distribution
+        p = target_distribution(assignments.detach())
         
-        return assignments, pooled_embeddings, spectral_loss, collapse_loss, total_loss, entropy_loss
+        # Loss calculations
+        kl_loss = F.kl_div(assignments.log(), p, reduction='batchmean')
+        recon_loss = F.mse_loss(z_recon, embeddings)  # Now same dimensions
+        collapse_loss = self._calculate_collapse_loss(assignments)
+        
+        total_loss = kl_loss + 0.1 * recon_loss + 0.01 * collapse_loss
+        
+        # Pool embeddings
+        pooled = torch.mm(assignments.t(), z_hidden)  # [K, hidden_dim]
+        
+        return assignments, pooled, kl_loss, recon_loss, total_loss, z_hidden
     
-    def _calculate_losses(self, assignments: Tensor, adjacency: SparseTensor) -> tuple[Tensor, Tensor]:
-        """Compute DMoN losses"""
-        # Degrees and edge count
-        degrees = adjacency.sum(dim=1).to_dense()  # Correct for SparseTensor
-        m = degrees.sum() / 2
-        # print("Degrees and m calculated: ", degrees, m)
-        
-        # Spectral loss (modularity)
-        adjacency = adjacency.to_dense()
-        graph_pooled = assignments.T @ torch.sparse.mm(adjacency, assignments)  # [K, K]
-        normalizer = (assignments.T @ degrees) @ (degrees @ assignments) / (2 * m)
-        spectral_loss = -torch.trace(graph_pooled - normalizer) / (2 * m)
-        
-        # Collapse regularization
-        cluster_sizes = assignments.sum(dim=0)  # [K]
-        collapse_loss = (torch.norm(cluster_sizes) / adjacency.size(0) * \
-                       torch.sqrt(torch.tensor(self.n_clusters)) - 1)
+    def _calculate_collapse_loss(self, assignments: Tensor) -> Tensor:
+        cluster_sizes = assignments.sum(0)
+        return torch.std(cluster_sizes) / torch.mean(cluster_sizes)
+    
+    def initialize_clusters(self, embeddings: Tensor):
+        """Initialize cluster centers using k-means on projected embeddings"""
+        with torch.no_grad():
+            z = self.projection[:-1](embeddings)  # Use hidden representation
+            kmeans = KMeans(n_clusters=self.n_clusters, n_init=20)
+            kmeans.fit(z.cpu().numpy())
+            self.cluster_centers.data = torch.tensor(kmeans.cluster_centers_, 
+                                                   dtype=torch.float32, 
+                                                   device=embeddings.device)
 
-        # Entropy regularization (encourage balanced cluster usage)
-        entropy = -torch.sum(assignments * torch.log(assignments + 1e-8)) / assignments.size(0)
-        entropy_loss = -0.1 * entropy  # adjust the weight as needed
-        
-        # Return all losses
-        total_loss = spectral_loss + self.collapse_reg * collapse_loss + entropy_loss
-        return total_loss, spectral_loss, self.collapse_reg * collapse_loss, entropy_loss
+def target_distribution(q: Tensor) -> Tensor:
+    """Compute target distribution for KL divergence loss"""
+    weight = (q**2) / torch.sum(q, dim=0)
+    return (weight.t() / torch.sum(weight, dim=1)).t()
