@@ -98,15 +98,18 @@ def train():
         loss = model.loss(out, mask)
         loss.backward()
         optimizer.step()
-        if args.verbose:
+        if args.verbose and epoch % 50 == 0:
             print(f'(T) | Epoch={epoch:03d}, loss={float(loss):.4f}')
 
     out = scale(model(x, edge_index))
-    out = F.normalize(out, p=2, dim=1).detach().cpu()
+    out = F.normalize(out, p=2, dim=1).detach()
     # plot.plot(out, y, "after similarity", args.dataset)
     ##Output here is a torch.Size([2708, 512])
 ##-------------------------------------------------------------------------------------------------
-    dec = DEC_Clustering(input_dim=out.shape[1], n_clusters=n_clusters)
+    dec = DEC_Clustering(input_dim=out.shape[1], n_clusters=n_clusters).to(device)
+
+    if out.device != device:
+        out = out.to(device)
 
     dec.initialize_clusters(out)
     
@@ -120,24 +123,23 @@ def train():
         total_loss.backward()
         optimizer.step()
         
+        if epoch % 50 == 0:
+            print(f"Epoch {epoch}: Loss={total_loss.item():.4f} "
+                f"(KL={kl_loss.item():.4f} Recon={recon_loss.item():.4f})")
 
-        print(f"Epoch {epoch}: Loss={total_loss.item():.4f} "
-            f"(KL={kl_loss.item():.4f} Recon={recon_loss.item():.4f})")
-
-    with torch.no_grad():
+    # In the evaluation section of train():
+    with torch.amp.autocast(device_type='cuda'):  # Updated autocast
         final_assignments = dec(out)[0]
         cluster_ids = final_assignments.argmax(dim=1)
-    
+
     print(final_assignments)
     print(cluster_ids)
-    # plot.plot(final_emb, y, "after clustering", args.dataset)
 
-    # hard_labels = torch.argmax(assignments, dim=1).cpu().numpy()
-
-    metrics_eval = clustering_metrics(y.numpy(), cluster_ids.numpy())
+    # Convert to numpy properly
+    metrics_eval = clustering_metrics(y.cpu().numpy(), cluster_ids.cpu().numpy())  # Added .cpu()
 
     acc, nmi, ari, fms, f1_macro, f1_micro = metrics_eval.evaluationClusterModelFromLabel(tqdm=None)
-    print("clusters: ", len(np.unique(y.numpy())), len(np.unique(cluster_ids)))
+    print("clusters: ", len(np.unique(y.cpu().numpy())), len(np.unique(cluster_ids.cpu().numpy())))
 
     # eval
     # with torch.no_grad():
