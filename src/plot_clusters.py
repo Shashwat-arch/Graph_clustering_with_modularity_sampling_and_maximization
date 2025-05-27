@@ -22,5 +22,5 @@ def plot(embeddings, labels, path, dataset):
     plt.tight_layout()
 
     # Save to file
-    plt.savefig(f"/content/Graph_clustering_with_modularity_sampling_and_maximization/plots/clusters_tsne/embedding_visualization {path}.png", dpi=300)
+    plt.savefig(f"/content/Graph_clustering_with_modularity_sampling_and_maximization/plots/clusters_tsne/embedding_visualization_for_{dataset}_{path}.png", dpi=300)
     plt.show()

@@ -103,7 +103,7 @@ def train():
 
     out = scale(model(x, edge_index))
     out = F.normalize(out, p=2, dim=1).detach()
-    # plot.plot(out, y, "after similarity", args.dataset)
+    
     ##Output here is a torch.Size([2708, 512])
 ##-------------------------------------------------------------------------------------------------
     dec = DEC_Clustering(input_dim=out.shape[1], n_clusters=n_clusters).to(device)
@@ -129,11 +129,12 @@ def train():
 
     # In the evaluation section of train():
     with torch.amp.autocast(device_type='cuda'):  # Updated autocast
-        final_assignments = dec(out)[0]
+        final_assignments, _, _, _, _, final_embd = dec(out)
         cluster_ids = final_assignments.argmax(dim=1)
 
     print(final_assignments)
     print(cluster_ids)
+    plot.plot(final_embd, y, "after similarity", args.dataset)
 
     # Convert to numpy properly
     metrics_eval = clustering_metrics(y.cpu().numpy(), cluster_ids.cpu().numpy())  # Added .cpu()
