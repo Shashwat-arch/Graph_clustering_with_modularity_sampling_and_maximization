@@ -40,6 +40,7 @@ parser.add_argument('--wd', type=float, default=1e-3, help='weight decay')
 parser.add_argument('--epochs_sim', type=int, default=400)
 parser.add_argument('--epochs_cluster', type=int, default=400)
 parser.add_argument('--ns', type=float, default=0.5, help='')
+parser.add_argument('--alpha', type=float, default=0.5, help='')
 args = parser.parse_args()
 
 
@@ -106,7 +107,7 @@ def train():
     
     ##Output here is a torch.Size([2708, 512])
 ##-------------------------------------------------------------------------------------------------
-    dec = DEC_Clustering(input_dim=out.shape[1], n_clusters=n_clusters).to(device)
+    dec = DEC_Clustering(input_dim=out.shape[1], n_clusters=n_clusters, alpha=args.alpha).to(device)
 
     if out.device != device:
         out = out.to(device)
