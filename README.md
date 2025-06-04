@@ -32,5 +32,5 @@ pip install -r requirements.txt
 
 * Cora
   ```
-  !python train_gcn.py --runs 1 --dataset 'Computers' --hidden '512' --wt 100 --wl 2 --tau {tau} --ns 0.5 --lr 0.0005 --epochs_sim 150 --epochs_cluster 150 --wd 1e-3 --alpha 0.9
+  !python train.py --runs 1 --dataset 'Computers' --hidden '512' --1_1 100 --l_2 --tau 0.5 --ns 0.5 --lr 0.0005 --epochs_sim 150 --epochs_cluster 150 --wd 1e-3 --alpha 0.9
   ```
