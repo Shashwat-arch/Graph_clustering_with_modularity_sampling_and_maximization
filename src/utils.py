@@ -17,11 +17,11 @@ from src.clustering_metrics import clustering_metrics
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
-def get_sim(batch, adj, wt=20, wl=3):
+def get_sim(batch, adj, l_1=20, l_2=3):
     rowptr, col, _ = adj.csr()
     batch_size = batch.shape[0]
-    batch_repeat = batch.repeat(wt)
-    rw = adj.random_walk(batch_repeat, wl)[:, 1:]
+    batch_repeat = batch.repeat(l_1)
+    rw = adj.random_walk(batch_repeat, l_2)[:, 1:]
 
     if not isinstance(rw, torch.Tensor):
         rw = rw[0]

@@ -12,7 +12,7 @@ from torch_geometric.utils import to_undirected, add_remaining_self_loops
 
 from src.utils import setup_seed, get_sim, get_mask, scale, clustering, get_adjacency
 from src.sim_model import Model, Encoder
-from src.modularity_model import DEC_Clustering
+from src.clustering_module import DEC_Clustering
 from src.clustering_metrics import clustering_metrics
 import src.plot_clusters as plot
 
@@ -28,9 +28,9 @@ parser.add_argument('--hidden', type=str, default='512', help='GNN encoder')
 parser.add_argument('--projection', type=str, default='', help='Projection')
 
 # sample para
-parser.add_argument('--wt', type=int, default=100,
+parser.add_argument('--l_1', type=int, default=100,
                     help='number of random walks')
-parser.add_argument('--wl', type=int, default=2, help='depth of random walks')
+parser.add_argument('--l_2', type=int, default=2, help='depth of random walks')
 parser.add_argument('--tau', type=float, default=0.3, help='temperature')
 
 # learning para
@@ -67,7 +67,7 @@ def train():
                        col=edge_index[1], sparse_sizes=(N, N))
     adj.fill_value_(1.)
     batch = torch.LongTensor(list(range(N)))
-    batch, adj_batch = get_sim(batch, adj, wt=args.wt, wl=args.wl)
+    batch, adj_batch = get_sim(batch, adj, l_1=args.l_1, l_2=args.l_2)
 
     mask = get_mask(adj_batch)
 
