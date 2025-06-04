@@ -28,7 +28,7 @@ pip install -r requirements.txt
 
 # Reproduction
 
-# The same code can be used for Citeseer, Amazon-Photo and Amazon-Computers by changing the dataset name.
+> The same code can be used for Citeseer, Amazon-Photo and Amazon-Computers by changing the dataset name.
 
 * Cora
   ```
