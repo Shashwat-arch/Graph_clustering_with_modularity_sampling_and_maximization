@@ -1,0 +1,21 @@
+{
+  "n_nodes": 1000,
+  "n_edges": 10861,
+  "n_clusters": 4,
+  "target_avg_degree": 20.0,
+  "actual_avg_degree": 21.722,
+  "target_d_in": 18.0,
+  "target_d_out": 2.0,
+  "actual_homophily": 0.8181567074854986,
+  "detectability": 256.0,
+  "feature_dim": 32,
+  "feature_informativeness": 9.0,
+  "sigma_within": 1.0,
+  "sigma_between": 3.0,
+  "feature_alignment": "match",
+  "power_law_exponent": 2.0,
+  "degree_range": [
+    2,
+    60
+  ]
+}
