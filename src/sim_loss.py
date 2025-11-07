@@ -1,16 +1,12 @@
 import torch
 import torch.nn as nn
 
-
 class Loss(nn.Module):
-    def __init__(self, temperature=0.07, gamma=0.5, scale_by_temperature=True, alpha=0.01, coef0=0):
+    def __init__(self, temperature=0.07, gamma=0.5, scale_by_temperature=True):
         super().__init__()
         self.temperature = temperature
-        self.gamma = gamma  # Previously RBF bandwidth, unused for sigmoid but kept for compatibility
+        self.gamma = gamma  # RBF bandwidth parameter
         self.scale_by_temperature = scale_by_temperature
-        self.alpha = alpha  # Sigmoid kernel alpha parameter
-        self.coef0 = coef0  # Sigmoid kernel coef0 parameter
-
 
     def forward(self, out, mask):
         device = out.device
@@ -19,12 +15,12 @@ class Loss(nn.Module):
         row, col = row.to(device), col.to(device)
         batch_size = out.shape[0]
 
-        # Compute dot product between all pairs
-        dot_product = torch.matmul(out, out.T)  # [batch, batch]
-
-        # Compute Sigmoid kernel similarity: tanh(alpha * dot_product + coef0)
-        sim_matrix = torch.tanh(self.alpha * dot_product + self.coef0)
-
+        # Compute pairwise squared Euclidean distances
+        pairwise_dist = torch.cdist(out, out, p=2).pow(2)  # [batch, batch]
+        
+        # Compute RBF kernel similarity
+        sim_matrix = torch.exp(-self.gamma * pairwise_dist)
+        
         # Apply temperature scaling
         sim_matrix = torch.div(sim_matrix, self.temperature)
 
