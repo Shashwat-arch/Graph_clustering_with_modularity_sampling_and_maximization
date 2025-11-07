@@ -15,6 +15,7 @@ from src.sim_model import Model, Encoder
 from src.clustering_module import DEC_Clustering
 from src.clustering_metrics import clustering_metrics
 import src.plot_clusters as plot
+from src.synthetic_planetoid import SyntheticPlanetoid
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--verbose', type=bool, default=True, help='')
@@ -54,10 +55,28 @@ def train():
     path = 'data/'
     if args.dataset in ['Cora', 'Citeseer']:
         dataset = Planetoid(path, args.dataset)
+        n_clusters = {'Cora': 7, 'Citeseer': 6}[args.dataset]
     elif args.dataset in ['Photo', 'Computers']:
         dataset = Amazon(path, args.dataset)
+        n_clusters = {'Photo': 8, 'Computers': 10}[args.dataset]
+    elif args.dataset.startswith('Synthetic-'):
+        synth_name = args.dataset[len('Synthetic-'):]
+        print(f'Loading synthetic dataset: {synth_name}')
+        dataset = SyntheticPlanetoid(
+            root='/content/Graph_clustering_with_modularity_sampling_and_maximization/adc_sbm_graphs',
+            name=synth_name,
+            split='public',
+            num_train_per_class=20,
+            num_val=500,
+            num_test=1000,
+            seed=42
+        )
+        # Infer k directly from labels
+        y_tmp = dataset[0].y
+        n_clusters = int(torch.unique(y_tmp).numel())
     else:
         raise RuntimeError(f"Unknown dataset {args.dataset}")
+
 
     data = dataset[0]
     x, edge_index, y = data.x, data.edge_index, data.y
@@ -85,9 +104,9 @@ def train():
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.wd)
 
-    dataset2n_clusters = {'Cora': 7,
-                          'Citeseer': 6, 'Photo': 8, 'Computers': 10}
-    n_clusters = dataset2n_clusters[args.dataset]
+    # dataset2n_clusters = {'Cora': 7,
+    #                       'Citeseer': 6, 'Photo': 8, 'Computers': 10}
+    # n_clusters = dataset2n_clusters[args.dataset]
 
     # train
     for epoch in range(1, args.epochs_sim + 1):
@@ -133,9 +152,9 @@ def train():
         final_assignments, _, _, _, _, final_embd = dec(out)
         cluster_ids = final_assignments.argmax(dim=1)
 
-    print(final_assignments)
-    print(cluster_ids)
-    plot.plot(final_embd, y, "after similarity", args.dataset)
+    # print(final_assignments)
+    # print(cluster_ids)
+    # plot.plot(final_embd, y, "after similarity", args.dataset)
 
     # Convert to numpy properly
     metrics_eval = clustering_metrics(y.cpu().numpy(), cluster_ids.cpu().numpy())  # Added .cpu()
