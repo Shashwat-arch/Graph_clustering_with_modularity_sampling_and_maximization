@@ -46,7 +46,7 @@ class DEC_Clustering(nn.Module):
         recon_loss = F.mse_loss(z_recon, embeddings)
         collapse_loss = torch.std(assignments.sum(0)) / torch.mean(assignments.sum(0))
         
-        total_loss = kl_loss + 0.1 * recon_loss + 0.01 * collapse_loss
+        total_loss = kl_loss + 0.1 * recon_loss + 0.5 * collapse_loss
         pooled = torch.mm(assignments.t(), z_hidden)
         
         return assignments, pooled, kl_loss, recon_loss, total_loss, z_hidden
