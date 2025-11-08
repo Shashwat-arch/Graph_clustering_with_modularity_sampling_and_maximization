@@ -120,9 +120,9 @@ def train():
     for epoch in range(1, args.epochs_cluster):
         assignments, pooled, kl_loss, recon_loss, total_loss, final_emb = dec(out)
 
-        optimizer.zero_grad()
+        optimizer_dec.zero_grad()
         total_loss.backward()
-        optimizer.step()
+        optimizer_dec.step()
         
         if epoch % 50 == 0:
             print(f"Epoch {epoch}: Loss={total_loss.item():.4f} "
